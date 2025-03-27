@@ -7,8 +7,8 @@ use tokio::net::{TcpListener, TcpStream};
 use sha1::{Sha1, Digest};
 use base64::{Engine, engine::general_purpose};
 
-mod ws;
-use ws::*;
+mod ws_key;
+use ws_key::*;
 mod c_fn;
 use c_fn::*;
 
@@ -81,7 +81,13 @@ async fn process_client(mut stream: TcpStream, addr: SocketAddr) {
 		{ println!("!!! GET -> NG..."); }
 }
 
-	WSKey::get_accept_key(&array_buf_read);
+	let mut wskey = WSKey::default();
+	if let Err(err_msg) = wskey.get_accept_key(&array_buf_read) {
+		println!("!!! failed to get Sec-Websocket-Key -> {err_msg}");
+		return;  // この async リソースは破棄される
+	}
+	
+	wskey.DBG_show_accept_key();
 }
 
 // -------------------------------------------------------------

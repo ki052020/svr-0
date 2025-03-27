@@ -1,21 +1,23 @@
 use super::{C_to_u32str, C_to_u64str};
+use sha1::{Sha1, Digest};
+use base64::{Engine, engine::general_purpose};
 
 pub struct WSKey {
-	_sec_key: [u8; 60],
+	accept_key: [u8; 28],
 }
 
 impl Default for WSKey {
 	fn default() -> Self {
 		WSKey {
-			_sec_key: [0u8; 60],
+			accept_key: [0u8; 28],
 		}
 	}
 }
 
 impl WSKey {
-	pub fn get_accept_key(buf: &[u8]) -> Option<[u8; 60]> {
+	pub fn get_accept_key(&mut self, buf: &[u8]) -> Result<(), &str> {
 		let len_buf: usize = buf.len() as usize;
-		if len_buf < 8 { return None; }
+		if len_buf < 8 { return Err("!!! buf.len() < 8"); }
 		
 		unsafe {
 			let ptr = buf.as_ptr();
@@ -23,18 +25,19 @@ impl WSKey {
 			
 			let mut ptr = match Self::srch_Sec_WebSocket_Key(ptr, ptr_tmnt) {
 				Some(x) => x,
-				None => { return None; }
+				None => { return Err("!!! not found -> Sec_WebSocket_Key"); }
 			};
 
 			// Sec-WebSocket-Key: の読み取り
 			loop {
 				if *ptr != 0x20 { break; }
 				ptr = ptr.add(1);
-				if ptr == ptr_tmnt { return None; }
+				if ptr == ptr_tmnt { return Err("!!! not found -> Sec_WebSocket_Key"); }
 			}
-			let mut ret_ary = [0u8; 60];
+			
+			let mut ary_key = [0u8; 60];
 			{
-				let dst = ret_ary.as_mut_ptr() as *mut u64;
+				let dst = ary_key.as_mut_ptr() as *mut u64;
 				let src = ptr as *mut u64;
 				for i in 0..3 {
 					dst.add(i).write_unaligned(src.add(i).read_unaligned());
@@ -49,11 +52,18 @@ impl WSKey {
 				dst.write_unaligned(C_to_u32str("5B11"));
 			}
 			
-			let v = ret_ary.to_vec();
-			let str = String::from_utf8_unchecked(v);
-			println!("+++ found -> 'Sec-WebSocket-Key:' -> {str}");
+			let mut hasher = Sha1::new();
+			hasher.update(ary_key);
 			
-			Some(ret_ary)
+			// 20 bytes のコピーが発生するが、これはなくせるはず？？
+			let sha1_result: [u8; 20] = hasher.finalize().into();
+			
+			let engine: general_purpose::GeneralPurpose = general_purpose::STANDARD;
+			match engine.internal_encode(&sha1_result, &mut self.accept_key) {
+				27 => self.accept_key[27] = b'=',
+				x => panic!("x -> {x}"),
+			}			
+			Ok(())
 		}
 	}
 	
@@ -99,8 +109,13 @@ impl WSKey {
 			}
 		}
 	}
+
+	// -------------------------------------------------------------
+	#[allow(dead_code)]
+	#[allow(non_snake_case)]
+	pub fn DBG_show_accept_key(&self) {
+		let dbg_str = String::from_utf8(self.accept_key.to_vec()).unwrap();
+		println!("&&& accept key -> {dbg_str}");
+	}
 }
-
-// gLMxVY3NvVtc9pFCWDRqng==
-
 
