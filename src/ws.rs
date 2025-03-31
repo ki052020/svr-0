@@ -229,6 +229,8 @@ impl<'a> WsChannel<'a> {
 
 	// -------------------------------------------------------------
 	pub async fn read_async(&mut self) -> Result<(&[u8], bool), String> {
+//	pub async fn read_async<'a>(&'a mut self) -> Result<(&'a [u8], bool), String> {  <- case 1
+//	pub async fn read_async<'b>(&'b mut self) -> Result<(&'b [u8], bool), String> {  <- case 2
 		let (idx_next, idx_tmnt) = {
 			if self.idx_read_next == 0 {
 				match self.reader.read(&mut self.buf_read[..]).await {
