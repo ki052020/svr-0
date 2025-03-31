@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<script>
+console.log("--- program started");
+const ws = new WebSocket('ws://192.168.0.30');
+
+ws.onmessage = (e) => {
+	console.log('Host message -> ', e.data);
+}
+
+ws.onopen = (e) => {
+	console.log("--- connected.");
+	
+	ws.send('Hello WebSocket! あいう');
+	ws.send('かきくけこ');
+}
+</script>
