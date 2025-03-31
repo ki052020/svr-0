@@ -11,14 +11,15 @@ use tokio::net::tcp::{ReadHalf, WriteHalf};
 const BYTES_READ_BUF_CLIENT: usize = 8 * 1024;
 const BYTES_WRITE_BUF_CLIENT: usize = 8 * 1024;
 
+
 ////////////////////////////////////////////////////////////////
 // WsKey
-struct WsKey {
+pub struct WsKey {
 	accept_key: [u8; 28],
 }
 
 impl WsKey {
-	fn new(buf: &[u8]) -> Result<Self, &'static str> {
+	pub fn new(buf: &[u8]) -> Result<Self, &'static str> {
 		let len_buf: usize = buf.len() as usize;
 		if len_buf < 8 { return Err("!!! buf.len() < 8"); }
 		
@@ -125,6 +126,7 @@ impl WsKey {
 
 
 ////////////////////////////////////////////////////////////////
+// WsHandshake
 const RESP_STR: &str = "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ";
 const NUM_RESP_STR: usize = RESP_STR.len();
 
@@ -132,12 +134,12 @@ const NUM_RESP_STR: usize = RESP_STR.len();
 const _RESP_STR: &str = "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n\r\n";
 */
 
-struct WsHandshake {	
+pub struct WsHandshake {	
 	resp: [u8; NUM_RESP_STR + 32],
 }
 
 impl WsHandshake {
-	fn new(ws_key: WsKey) -> Self {
+	pub fn new(ws_key: WsKey) -> Self {
 		let mut resp = [0u8; NUM_RESP_STR + 32];
 		unsafe {
 			let ptr = resp.as_mut_ptr();
@@ -155,7 +157,7 @@ impl WsHandshake {
 	}
 
 	// -------------------------------------------------------------
-	async fn connect(&self, writer: &mut WriteHalf<'_>) -> Result<(), String>
+	pub async fn connect(&self, writer: &mut WriteHalf<'_>) -> Result<(), String>
 	{
 		match writer.write(&self.resp).await {
 			Ok(bytes) => {
@@ -175,36 +177,39 @@ impl WsHandshake {
 	}
 }
 
+
 ////////////////////////////////////////////////////////////////
+// WsChannel
 pub struct WsChannel<'a> {
 	reader: ReadHalf<'a>,
 	writer: WriteHalf<'a>,
+	
+	buf_read: [u8; BYTES_READ_BUF_CLIENT],
+	// +10 -> ヘッダの最大バイト数
+	buf_write: [u8; BYTES_WRITE_BUF_CLIENT + 10],
 
-	buf_read: [u8; BYTES_READ_BUF_CLIENT + 7],
-	buf_write: [u8; BYTES_WRITE_BUF_CLIENT],
+	idx_read_next: usize,
+	idx_read_tmnt: usize,
 }
 
 impl<'a> WsChannel<'a> {
 	pub async fn new(stream: &'a mut TcpStream) -> Result<Self, String> {
 		let (mut reader, mut writer) = stream.split();
 		
-		let mut buf_read = [0u8; BYTES_READ_BUF_CLIENT + 7];
-		let bytes_read: usize =
-			match reader.read(&mut buf_read[0..BYTES_READ_BUF_CLIENT]).await {
-				Ok(bytes) => bytes,
-				Err(err) => return Err(err.to_string())
-			};
+		let mut buf_read = [0u8; BYTES_READ_BUF_CLIENT];
+		
+		let bytes_read = match reader.read(&mut buf_read).await {
+			Ok(bytes) => bytes,
+			Err(err) => { return Err(err.to_string()); }
+		};
 		
 		let ws_key: WsKey
 			= match WsKey::new(&buf_read[0..bytes_read]) {
 				Ok(ws_key) => ws_key,
 				Err(err_str) => return Err(err_str.to_string())
 			};
-		
+	
 		let ws_handshake = WsHandshake::new(ws_key);
-		
-		// &&&&&&&&&&&&&
-//		ws_handshake.DBG_show_resp();
 
 		if let Err(err_string) = ws_handshake.connect(&mut writer).await {
 			return Err(err_string);
@@ -214,96 +219,140 @@ impl<'a> WsChannel<'a> {
 			reader,
 			writer,
 			
-			// +7 -> xor デコードを８bytes ずつ行うため
 			buf_read,
-			buf_write: [0u8; BYTES_WRITE_BUF_CLIENT]
+			buf_write: [0u8; BYTES_WRITE_BUF_CLIENT + 10],
+			
+			idx_read_next: 0,
+			idx_read_tmnt: 0,
 		})
 	}
-		
-	// -------------------------------------------------------------
-	// 戻り値 : bool -> FIN の場合 true となる
-	pub async fn read_async(&'a mut self) -> Result<(&'a [u8], bool), String> {
-//		println!("&&& read_async()");
-	
-		let bytes_read
-			= match self.reader.read(&mut self.buf_read).await {
-				Ok(x) => x,
-				Err(err) => { return Err(err.to_string()); }
-			};
 
-//		println!("   bytes_read -> {bytes_read}");
+	// -------------------------------------------------------------
+	pub async fn read_async(&mut self) -> Result<(&[u8], bool), String> {
+		let (idx_next, idx_tmnt) = {
+			if self.idx_read_next == 0 {
+				match self.reader.read(&mut self.buf_read[..]).await {
+					Ok(bytes) => (0, bytes),
+					Err(err) => { return Err(err.to_string()); }
+				}
+			} else {
+				(self.idx_read_next, self.idx_read_tmnt)
+			}
+		};
+//		println!("&&& (idx_next, idx_tmnt) -> ({idx_next}, {idx_tmnt})");
 		
-		let mut ret_b_fin = false;
-		#[allow(unused_assignments)]
-		let mut ret_idx_start = 0;
-		unsafe {
-			#[allow(non_snake_case)]
-			let DBG_ptr_top = self.buf_read.as_ptr();
-			let ptr = self.buf_read.as_ptr();
-			
-			// FIN のチェック。RSV と opcode は無視
-			if (*ptr & 0x80) != 0
-				{ ret_b_fin = true; }
+		let mut ret_b_close = false;
+		let (idx_payload_start, idx_payload_tmnt) = unsafe {
+			let ptr_top = self.buf_read.as_ptr();
+			let ptr = ptr_top.add(idx_next);
+			{
+				// FIN と Close のチェック。FIN == 0 の場合はエラーとする
+				let byte_1st = *ptr;
+				if (byte_1st & 0x80) == 0
+					{ return Err("!!! FIN == 0".to_string()); }
+					
+				// opcode のチェック
+				if (byte_1st & 0x0f) == 8  // Close のみをチェックしている
+					{ ret_b_close = true; }
+			}
 				
 			// MASK のチェック
 			let byte_2nd: u8 = *ptr.add(1);
 			if (byte_2nd & 0x80) == 0
 				{ return Err("!!! MASK bit is 0.".to_string()); }
 				
-			// payload_len を設定し、ptr を Masking-key の位置に設定する
-			let (payload_len, ptr): (usize, *const u8) = {
+			let (idx_payload_start, mut bytes_payload, ptr): (usize, usize, *const u8) = {
 				let len: usize = (byte_2nd & 0x7f) as usize;
 				if len <= 125 {
-					ret_idx_start = 2 + 4;
-					(len, ptr.add(2))
+					(idx_next + 2 + 4, len, ptr.add(2))
 				} else if len == 126 {
-					ret_idx_start = 2 + 2 + 4;
 					let ptr_u16 = ptr.add(2) as *const u16;
-					(*ptr_u16 as usize, ptr.add(4))
+					(idx_next + 2 + 2 + 4, *ptr_u16 as usize, ptr.add(4))
 				} else {
-					ret_idx_start = 2 + 8 + 4;
 					let ptr_u64 = ptr.add(2) as *const u64;
-					(*ptr_u64 as usize, ptr.add(8))
+					(idx_next + 2 + 8 + 4, *ptr_u64 as usize, ptr.add(8))
 				}
 			};
-			
-			// エラー顕在化 ###########
-			{
-				let mut bytes_calcd: usize = ptr.offset_from(DBG_ptr_top).try_into().unwrap();
-				bytes_calcd += payload_len + 4;
-				if bytes_calcd != bytes_read
-					{ return Err("!!! bytes_calcd != bytes_read".to_string()); }
-			}
-			
+//			println!("&&& bytes_payload -> {bytes_payload}");
+						
 			// xor_mask -> little endian であることに注意
 			let xor_mask: u64 = (ptr as *const u32).read_unaligned() as u64;
 			let xor_mask = (xor_mask << 32) + xor_mask;
-			let mut ptr_u64 = ptr.add(4) as *mut u64;
-			let mut bytes_masked = bytes_read - ret_idx_start;
 			
+			let mut ptr_u64 = ptr.add(4) as *mut u64;
 			loop {
+				if bytes_payload < 8 { break; }
 				ptr_u64.write_unaligned(ptr_u64.read_unaligned() ^ xor_mask);
 				ptr_u64 = ptr_u64.add(1);
-				if bytes_masked < 8 { break; }
-				bytes_masked -= 8;
-			}
-#[cfg(any())]
-{
-			while bytes_masked >= 4 {
-				ptr_u32.write_unaligned(ptr_u32.read_unaligned() ^ xor_mask);
-				ptr_u32 = ptr_u32.add(1);
-				bytes_masked -= 4;
+				bytes_payload -= 8;
 			}
 			
-			let mut ptr = ptr_u32 as *mut u8;
-			while bytes_masked > 0 {
+			let mut xor_mask = xor_mask as u32;
+			let mut ptr: *mut u8
+				= if bytes_payload < 4 {
+					ptr_u64 as *mut u8
+				} else {
+					let ptr_u32 = ptr_u64 as *mut u32;
+					ptr_u32.write_unaligned(ptr_u32.read_unaligned() ^ xor_mask);
+					bytes_payload -= 4;
+					ptr_u32.add(1) as *mut u8
+				};
+			
+			while bytes_payload > 0 {
 				*ptr = *ptr ^ (xor_mask as u8);
 				ptr = ptr.add(1);
 				xor_mask >>= 8;
-				bytes_masked -= 1;
+				bytes_payload -= 1;
 			}
-}
+			
+			// ptr は、tmnt の位置を指している
+			let idx_payload_tmnt = ptr.offset_from(ptr_top);
+			if idx_payload_tmnt < 0
+				{ return Err("!!! idx_payload_tmnt < 0".to_string()); }
+			(idx_payload_start, idx_payload_tmnt as usize)
+		};
+		
+		if idx_tmnt == idx_payload_tmnt {
+			self.idx_read_next = 0;
+		} else {
+			self.idx_read_next = idx_payload_tmnt;
+			self.idx_read_tmnt = idx_tmnt;
+		};
+				
+		Ok((&self.buf_read[idx_payload_start..idx_payload_tmnt], ret_b_close))
+	}
+
+	// -------------------------------------------------------------
+	pub async fn send_text(&mut self, msg: &str) -> Result<(), String> {
+		let msg_len: usize = msg.len();
+		if msg_len > BYTES_WRITE_BUF_CLIENT
+			{ return Err("!!! msg.len() > BYTES_WRITE_BUF_CLIENT".to_string()); };
+		
+		let idx_start: usize = unsafe {
+			let ptr = self.buf_write.as_mut_ptr().add(10);
+			std::intrinsics::copy_nonoverlapping(msg.as_ptr(), ptr, msg_len);
+			
+			// FIN = 1, opcode = テキストフレーム -> 先頭は 0x81
+			if msg_len <= 125 {
+				*ptr.sub(2) = 0x81;
+				*ptr.sub(1) = msg_len as u8;
+				10 - 2
+			} else if msg_len <= 0xffff {
+				*ptr.sub(4) = 0x81;
+				*ptr.sub(3) = 126;
+				*(ptr.sub(2) as *mut u16) = msg_len as u16;
+				10 - 4
+			} else {
+				*ptr.sub(10) = 0x81;
+				*ptr.add(9) = 127;
+				*(ptr.add(8) as *mut u64) = msg_len as u64;
+				0
+			}
+		};
+		
+		match self.writer.write(&self.buf_write[idx_start..(msg_len + 10)]).await {
+			Ok(_) => Ok(()),
+			Err(err) => Err(err.to_string())
 		}
-		Ok((&self.buf_read[ret_idx_start..bytes_read], ret_b_fin))
 	}
 }
