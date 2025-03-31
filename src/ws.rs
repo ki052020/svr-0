@@ -346,8 +346,8 @@ impl<'a> WsChannel<'a> {
 				10 - 4
 			} else {
 				*ptr.sub(10) = 0x81;
-				*ptr.add(9) = 127;
-				*(ptr.add(8) as *mut u64) = msg_len as u64;
+				*ptr.sub(9) = 127;
+				*(ptr.sub(8) as *mut u64) = msg_len as u64;
 				0
 			}
 		};
