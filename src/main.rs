@@ -2,9 +2,6 @@ use std::net::SocketAddr;
 
 use tokio::net::{TcpListener, TcpStream};
 
-use sha1::{Sha1, Digest};
-use base64::{Engine, engine::general_purpose};
-
 mod ws;
 use ws::*;
 mod c_fn;

@@ -14,12 +14,12 @@ const BYTES_WRITE_BUF_CLIENT: usize = 8 * 1024;
 
 ////////////////////////////////////////////////////////////////
 // WsKey
-pub struct WsKey {
+struct WsKey {
 	accept_key: [u8; 28],
 }
 
 impl WsKey {
-	pub fn new(buf: &[u8]) -> Result<Self, &'static str> {
+	fn new(buf: &[u8]) -> Result<Self, &'static str> {
 		let len_buf: usize = buf.len() as usize;
 		if len_buf < 8 { return Err("!!! buf.len() < 8"); }
 		
@@ -118,7 +118,7 @@ impl WsKey {
 	// -------------------------------------------------------------
 	#[allow(dead_code)]
 	#[allow(non_snake_case)]
-	pub fn DBG_show_accept_key(&self) {
+	fn DBG_show_accept_key(&self) {
 		let dbg_str = String::from_utf8(self.accept_key.to_vec()).unwrap();
 		println!("&&& accept key -> {dbg_str}");
 	}
@@ -134,12 +134,12 @@ const NUM_RESP_STR: usize = RESP_STR.len();
 const _RESP_STR: &str = "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n\r\n";
 */
 
-pub struct WsHandshake {	
+struct WsHandshake {	
 	resp: [u8; NUM_RESP_STR + 32],
 }
 
 impl WsHandshake {
-	pub fn new(ws_key: WsKey) -> Self {
+	fn new(ws_key: WsKey) -> Self {
 		let mut resp = [0u8; NUM_RESP_STR + 32];
 		unsafe {
 			let ptr = resp.as_mut_ptr();
@@ -157,7 +157,7 @@ impl WsHandshake {
 	}
 
 	// -------------------------------------------------------------
-	pub async fn connect(&self, writer: &mut WriteHalf<'_>) -> Result<(), String>
+	async fn connect(&self, writer: &mut WriteHalf<'_>) -> Result<(), String>
 	{
 		match writer.write(&self.resp).await {
 			Ok(bytes) => {
@@ -172,7 +172,7 @@ impl WsHandshake {
 	// -------------------------------------------------------------
 	#[allow(dead_code)]
 	#[allow(non_snake_case)]
-	pub fn DBG_show_resp(&self) {
+	fn DBG_show_resp(&self) {
 		DBG_show_http_req(&self.resp);
 	}
 }
@@ -332,7 +332,7 @@ impl<'a> WsChannel<'a> {
 			let ptr = self.buf_write.as_mut_ptr().add(10);
 			std::intrinsics::copy_nonoverlapping(msg.as_ptr(), ptr, msg_len);
 			
-			// FIN = 1, opcode = テキストフレーム -> 先頭は 0x81
+			// FIN = 1, opcode = テキストフレーム -> 先頭１byte は 0x81
 			if msg_len <= 125 {
 				*ptr.sub(2) = 0x81;
 				*ptr.sub(1) = msg_len as u8;
