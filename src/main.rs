@@ -70,7 +70,7 @@ async fn process_client(mut stream: TcpStream, addr: SocketAddr) {
 
 // -------------------------------------------------------------
 #[allow(non_snake_case)]
-async fn TEST_read_async<'a>(ws_channel: &mut WsChannel<'a>) -> bool {
+async fn TEST_read_async(ws_channel: &mut WsChannel<'_>) -> bool {
 	let (buf_decoded, b_close)
 		= match ws_channel.read_async().await {
 			Ok(x) => x,
