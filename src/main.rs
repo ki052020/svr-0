@@ -9,6 +9,57 @@ mod dbg;
 use dbg::*;
 
 // -------------------------------------------------------------
+#[cfg(test)]
+mod test1 {
+	#[derive(Debug)]
+	struct S<'a> {
+		ref_val: &'a mut i32,
+	}
+	
+	impl<'a> S<'a> {
+		fn new(ref_val: &'a mut i32) -> Self {
+			S {
+				ref_val,
+			}
+		}
+	}
+	
+	fn f<'a>(s: &'a mut S<'a>) {
+		*s.ref_val += 1;
+	}
+
+	fn g1<'a>(s: &'a mut S) {
+		*s.ref_val += 1;
+	}
+
+	fn g2<'a>(s: &mut S<'a>) {
+		*s.ref_val += 1;
+	}
+	
+	fn g3(s: &mut S) {
+		*s.ref_val += 1;
+	}
+
+	fn g4<'a, 'b>(s: &'a mut S<'b>) {
+		*s.ref_val += 1;
+	}
+
+	#[test]
+	fn test_1() {
+		let mut val: i32 = 0;
+		let mut s = S::new(&mut val);
+		
+//		f(&mut s);
+		g1(&mut s);
+		g2(&mut s);
+		g3(&mut s);
+		g4(&mut s);
+	
+		println!("{s:?}");
+	}
+}
+
+// -------------------------------------------------------------
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
 	let listener = TcpListener::bind("0.0.0.0:80").await?;
