@@ -24,6 +24,7 @@ mod test1 {
 		}
 	}
 	
+	#[allow(dead_code)]
 	fn f<'a>(s: &'a mut S<'a>) {
 		*s.ref_val += 1;
 	}
@@ -43,6 +44,15 @@ mod test1 {
 	fn g4<'a, 'b>(s: &'a mut S<'b>) {
 		*s.ref_val += 1;
 	}
+	
+	fn g5<'a, 'b>(s: &'a mut S<'b>) where 'b: 'a {
+		*s.ref_val += 1;
+	}
+
+	#[allow(dead_code)]
+	fn g6<'a, 'b>(s: &'a mut S<'b>) where 'a: 'b {
+		*s.ref_val += 1;
+	}
 
 	#[test]
 	fn test_1() {
@@ -54,6 +64,8 @@ mod test1 {
 		g2(&mut s);
 		g3(&mut s);
 		g4(&mut s);
+		g5(&mut s);
+//		g6(&mut s);
 	
 		println!("{s:?}");
 	}
