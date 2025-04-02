@@ -58,7 +58,7 @@ mod test1 {
 	fn test_1() {
 		let mut val: i32 = 0;
 		let mut s = S::new(&mut val);
-		
+
 //		f(&mut s);
 		g1(&mut s);
 		g2(&mut s);
